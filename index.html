@@ -319,7 +319,7 @@
     // xRot: hand-Y-driven pitch (look down/up at the case)
     // zRot: hand-tilt-driven roll (case leans left/right with the hand line)
     const BASE_XTILT = 0;
-    const Z_TILT_GAIN = 0.4;  // softer than 1:1 — case rolls 0.4× the hand-line tilt
+    const Z_TILT_GAIN = 0.2;  // softer than 1:1 — case rolls 0.4× the hand-line tilt
     const caseAnim = { lidTarget: 0, xRot: BASE_XTILT, zRot: 0, px: 0, py: -0.4 };
 
     function screenToWorld(px, py) {
@@ -353,6 +353,9 @@
         caseAnim.xRot  = BASE_XTILT + xClamped;
 
         // Z rotation from hand-line tilt — softened by Z_TILT_GAIN
+        const Z_LIMIT_DEG = 10;
+        const zDeg = tiltAngle * Z_TILT_GAIN;
+        const zClamped = Math.max(-Z_LIMIT_DEG, Math.min(Z_LIMIT_DEG, zDeg));
         caseAnim.zRot  = tiltAngle * (Math.PI / 180) * Z_TILT_GAIN;
       }
     }
@@ -446,7 +449,7 @@
 
       lidPivot.rotation.x  += (caseAnim.lidTarget - lidPivot.rotation.x)  * 0.10;
       caseGroup.rotation.x += (caseAnim.xRot      - caseGroup.rotation.x) * 0.08;
-      caseGroup.rotation.z += (caseAnim.zRot      - caseGroup.rotation.z) * 0.04; // slower for calm roll
+      caseGroup.rotation.z += (caseAnim.zRot      - caseGroup.rotation.z) * 0.02; // slower for calm roll
       caseGroup.position.x += (caseAnim.px        - caseGroup.position.x) * 0.03;
       caseGroup.position.y += (caseAnim.py        - caseGroup.position.y) * 0.03;
 
