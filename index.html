@@ -191,20 +191,36 @@
     caseGroup.add(baseMesh);
     addGoldEdges(baseMesh, BW, BH, BD, goldLine);
 
-    // Cream cushion inside base (near top, visible when lid opens)
+    // Interior cushion — rebuilt with polygonOffset + depthWrite:false to eliminate z-fighting.
+    // Top of cushion sits at BH/2 - 0.12 = 0.255, well clear of base top face (0.375).
+    // Bottom of cushion at 0.195, well above base floor (-0.375 + 0.05 safety = -0.325).
+    const cushMat2 = new THREE.MeshStandardMaterial({
+      color:               0xF0E8DC,
+      roughness:           0.94,
+      depthWrite:          false,
+      polygonOffset:       true,
+      polygonOffsetFactor: -1,
+    });
     const cushMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(BW - 0.12, 0.06, BD - 0.12),
-      creamMat
+      new THREE.BoxGeometry(BW - 0.14, 0.06, BD - 0.14),
+      cushMat2
     );
-    cushMesh.position.y = BH / 2 - 0.1; // sink 0.07 deeper to clear z-fighting with base top face
+    cushMesh.position.y = BH / 2 - 0.15; // center at 0.225; top 0.255, bottom 0.195
     baseMesh.add(cushMesh);
 
     // Ring slot groove on the cushion
+    const slotMat2 = new THREE.MeshStandardMaterial({
+      color:               0xE0D5C5,
+      roughness:           0.97,
+      depthWrite:          false,
+      polygonOffset:       true,
+      polygonOffsetFactor: -2,
+    });
     const slotMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.11, 0.07, BD - 0.18),
-      slotMat
+      new THREE.BoxGeometry(0.11, 0.065, BD - 0.20),
+      slotMat2
     );
-    slotMesh.position.y = 0.065;
+    slotMesh.position.y = 0.062;
     cushMesh.add(slotMesh);
 
     // ─ Lid pivot group — hinge at back-top edge of base ─
@@ -240,7 +256,9 @@
     const RING_Y_SHOWN  = 0.68;  // above the open case
 
     // ── Animation state ──────────────────────────────────────────
-    const caseAnim = { lidTarget: 0, zRot: 0, px: 0, py: -0.4 };
+    // xRot: hand-driven X rotation; -0.25 rad is the default "look-down" starting angle
+    const BASE_XTILT = -0.25;
+    const caseAnim = { lidTarget: 0, xRot: BASE_XTILT, px: 0, py: -0.4 };
 
     function screenToWorld(px, py) {
       const w = window.innerWidth, h = window.innerHeight;
@@ -255,16 +273,24 @@
       };
     }
 
-    function updateCaseOpen(openPercent, tiltAngle, cx, cy) {
+    function updateCaseOpen(openPercent, _tiltAngle, cx, cy) {
       if (!spaceOpen) {
         caseAnim.lidTarget = openPercent * MAX_OPEN;
       }
-      const clampedTilt = Math.max(-30, Math.min(30, tiltAngle));
-      caseAnim.zRot = -clampedTilt * (Math.PI / 180);
       if (cx != null) {
+        // Position
         const wp    = screenToWorld(cx, cy);
         caseAnim.px = wp.x;
         caseAnim.py = wp.y;
+
+        // X rotation from hand center Y:
+        //   cy = 0 (top of screen)    → +25° (camera looks down at case)
+        //   cy = height (bottom)      → -25° (camera looks up)
+        //   cy = height/2 (middle)    →   0° + BASE_XTILT
+        const normY    = cy / landmarkCanvas.height; // 0 = top, 1 = bottom
+        const xDeg     = (0.5 - normY) * 50;        // ±25°
+        const xClamped = Math.max(-25, Math.min(25, xDeg)) * (Math.PI / 180);
+        caseAnim.xRot  = BASE_XTILT + xClamped;
       }
     }
 
@@ -281,7 +307,7 @@
     (function animate() {
       requestAnimationFrame(animate);
       lidPivot.rotation.x  += (caseAnim.lidTarget - lidPivot.rotation.x)  * 0.10;
-      caseGroup.rotation.z += (caseAnim.zRot      - caseGroup.rotation.z) * 0.08;
+      caseGroup.rotation.x += (caseAnim.xRot      - caseGroup.rotation.x) * 0.08;
       caseGroup.position.x += (caseAnim.px        - caseGroup.position.x) * 0.03;
       caseGroup.position.y += (caseAnim.py        - caseGroup.position.y) * 0.03;
 
