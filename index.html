@@ -81,7 +81,7 @@
     ];
 
     // ── Three.js core ────────────────────────────────────────────
-    const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true });
+    const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true, logarithmicDepthBuffer: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000, 0);
@@ -196,7 +196,7 @@
       new THREE.BoxGeometry(BW - 0.12, 0.06, BD - 0.12),
       creamMat
     );
-    cushMesh.position.y = BH / 2 - 0.03;
+    cushMesh.position.y = BH / 2 - 0.1; // sink 0.07 deeper to clear z-fighting with base top face
     baseMesh.add(cushMesh);
 
     // Ring slot groove on the cushion
@@ -231,7 +231,7 @@
       new THREE.TorusGeometry(0.18, 0.038, 14, 64),
       ringMat
     );
-    ring.rotation.x = Math.PI / 2; // upright
+    ring.rotation.x = 0; // default torus lies in XY plane → faces camera (O shape); PI/2 would make it horizontal (---)
     ring.visible    = false;
     caseGroup.add(ring);
 
@@ -282,8 +282,8 @@
       requestAnimationFrame(animate);
       lidPivot.rotation.x  += (caseAnim.lidTarget - lidPivot.rotation.x)  * 0.10;
       caseGroup.rotation.z += (caseAnim.zRot      - caseGroup.rotation.z) * 0.08;
-      caseGroup.position.x += (caseAnim.px        - caseGroup.position.x) * 0.05;
-      caseGroup.position.y += (caseAnim.py        - caseGroup.position.y) * 0.05;
+      caseGroup.position.x += (caseAnim.px        - caseGroup.position.x) * 0.03;
+      caseGroup.position.y += (caseAnim.py        - caseGroup.position.y) * 0.03;
 
       // Ring: rise out of case once lid is 30% open
       const currentOpen = Math.abs(lidPivot.rotation.x) / Math.abs(MAX_OPEN);
@@ -298,11 +298,15 @@
     })();
 
     // ── Gesture state ────────────────────────────────────────────
-    const CLOSE_DIST  = 150, OPEN_DIST = 500, SMOOTH_LEN = 5, DECAY_RATE = 0.08;
-    const OPEN_RATE   = 0.05;   // max openPercent change per frame
-    const JUMP_THRESH = 0.18;   // normalized wrist jump distance that triggers frame rejection
-    const smoothBuf   = [];
-    let prevWrists    = null;   // [{x,y}, {x,y}] in normalized coords from last valid frame
+    const CLOSE_DIST   = 150, OPEN_DIST = 500, SMOOTH_LEN = 5, DECAY_RATE = 0.08;
+    const OPEN_RATE    = 0.05;  // max openPercent change per frame
+    const JUMP_THRESH  = 0.05;  // normalized wrist jump (5% of screen) that triggers frame rejection
+    const TILT_RATE    = 1.0;   // max tiltAngle change in degrees per frame
+    const CENTER_LEN   = 10;    // frames for center-position moving average
+    const smoothBuf    = [];
+    const centerXBuf   = [];
+    const centerYBuf   = [];
+    let prevWrists     = null;  // [{x,y}, {x,y}] in normalized coords from last valid frame
     let gesture = { openPercent: 0, tiltAngle: 0, centerX: 0, centerY: 0, bothHands: false };
 
     function wristDist(a, b) {
@@ -317,6 +321,8 @@
         gesture.bothHands   = false;
         gesture.openPercent = Math.max(0, gesture.openPercent - DECAY_RATE);
         prevWrists = null;
+        centerXBuf.length   = 0;
+        centerYBuf.length   = 0;
         return;
       }
 
@@ -349,9 +355,17 @@
       const delta = Math.max(-OPEN_RATE, Math.min(OPEN_RATE, smoothed - gesture.openPercent));
       gesture.openPercent += delta;
 
-      gesture.tiltAngle = Math.atan2(dy, dx) * (180 / Math.PI);
-      gesture.centerX   = (x0 + x1) / 2;
-      gesture.centerY   = (y0 + y1) / 2;
+      // tiltAngle: rate-limited to TILT_RATE °/frame
+      const rawTilt  = Math.atan2(dy, dx) * (180 / Math.PI);
+      const tiltDelta = Math.max(-TILT_RATE, Math.min(TILT_RATE, rawTilt - gesture.tiltAngle));
+      gesture.tiltAngle += tiltDelta;
+
+      // centerX/Y: 10-frame moving average for smooth position tracking
+      const rawCX = (x0 + x1) / 2, rawCY = (y0 + y1) / 2;
+      centerXBuf.push(rawCX); if (centerXBuf.length > CENTER_LEN) centerXBuf.shift();
+      centerYBuf.push(rawCY); if (centerYBuf.length > CENTER_LEN) centerYBuf.shift();
+      gesture.centerX = centerXBuf.reduce((s, v) => s + v, 0) / centerXBuf.length;
+      gesture.centerY = centerYBuf.reduce((s, v) => s + v, 0) / centerYBuf.length;
     }
 
     // ── Drawing ──────────────────────────────────────────────────
