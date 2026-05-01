@@ -44,7 +44,7 @@
     #hint {
       position: absolute; bottom: 20px; left: 50%;
       transform: translateX(-50%);
-      color: rgba(255,255,255,0.45); font-family: monospace; font-size: 13px;
+      color: rgba(255,255,255,0.4); font-family: monospace; font-size: 13px;
       z-index: 10; pointer-events: none; letter-spacing: 0.05em;
     }
   </style>
@@ -63,7 +63,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
   <script>
-    // ── DOM refs ────────────────────────────────────────────────
+    // ── DOM refs ─────────────────────────────────────────────────
     const video          = document.getElementById('camera-video');
     const landmarkCanvas = document.getElementById('landmark-canvas');
     const threeCanvas    = document.getElementById('three-canvas');
@@ -80,11 +80,12 @@
       [0,17],
     ];
 
-    // ── Three.js core ───────────────────────────────────────────
+    // ── Three.js core ────────────────────────────────────────────
     const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000, 0);
+    renderer.shadowMap.enabled = true;
 
     const scene    = new THREE.Scene();
     const camera3d = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
@@ -100,94 +101,166 @@
     }
     window.addEventListener('resize', resizeAll);
 
-    // ── Lighting ────────────────────────────────────────────────
-    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    // ── Lighting ─────────────────────────────────────────────────
+    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
 
-    const dirFront = new THREE.DirectionalLight(0xfff5e0, 0.9);
-    dirFront.position.set(1.5, 4, 3);
+    const dirFront = new THREE.DirectionalLight(0xfff0d0, 1.0);
+    dirFront.position.set(2, 5, 4);
     scene.add(dirFront);
 
-    const dirSide = new THREE.DirectionalLight(0xd0e0ff, 0.35);
+    const dirSide = new THREE.DirectionalLight(0xc8d8ff, 0.4);
     dirSide.position.set(-4, 2, 1);
     scene.add(dirSide);
 
-    // PointLight above the case — for ring sparkle later
-    const pointTop = new THREE.PointLight(0xfff8e7, 1.5, 12);
-    pointTop.position.set(0, 6, 1);
+    // PointLight above — ring sparkle when lid opens
+    const pointTop = new THREE.PointLight(0xfff5e0, 2.0, 10);
+    pointTop.position.set(0, 5, 1);
     scene.add(pointTop);
 
-    // ── Ring Case geometry ──────────────────────────────────────
-    const BASE_W = 3, BASE_H = 1.5, BASE_D = 3, LID_H = 0.3;
-    const MAX_OPEN = -(110 * Math.PI / 180); // lid fully open angle
+    // ── Rounded box geometry helper ──────────────────────────────
+    // Creates a w×h×d box with arc-rounded edges and corners.
+    // Uses ExtrudeGeometry: rounded-rect shape in XZ → extrude along Y.
+    function roundedBoxGeo(w, h, d, r, segs) {
+      segs = segs || 4;
+      r = Math.min(r, w * 0.44, h * 0.44, d * 0.44);
 
-    const caseMat  = new THREE.MeshStandardMaterial({ color: 0x0D1B2A, roughness: 0.8, metalness: 0.05 });
-    const goldMat  = new THREE.LineBasicMaterial({ color: 0xD4AF37 });
-    const creamMat = new THREE.MeshStandardMaterial({ color: 0xF5F0E8, roughness: 0.95 });
-    const slotMat  = new THREE.MeshStandardMaterial({ color: 0xE0D8C8, roughness: 0.98 });
+      // Rounded rectangle shape in XZ plane (footprint of the box)
+      const shape = new THREE.Shape();
+      shape.moveTo(-w / 2 + r, -d / 2);
+      shape.lineTo( w / 2 - r, -d / 2);
+      shape.absarc( w / 2 - r, -d / 2 + r, r, -Math.PI / 2,        0, false);
+      shape.lineTo( w / 2,      d / 2 - r);
+      shape.absarc( w / 2 - r,  d / 2 - r, r,         0,  Math.PI / 2, false);
+      shape.lineTo(-w / 2 + r,  d / 2);
+      shape.absarc(-w / 2 + r,  d / 2 - r, r,  Math.PI / 2,     Math.PI, false);
+      shape.lineTo(-w / 2,     -d / 2 + r);
+      shape.absarc(-w / 2 + r, -d / 2 + r, r,     Math.PI, 3 * Math.PI / 2, false);
 
-    // Root group — slight X-tilt to show the top face toward camera
+      const extrudeDepth = Math.max(0.001, h - 2 * r);
+      const geo = new THREE.ExtrudeGeometry(shape, {
+        steps:          1,
+        depth:          extrudeDepth,
+        bevelEnabled:   true,
+        bevelThickness: r,
+        bevelSize:      r,
+        bevelOffset:    -r,
+        bevelSegments:  segs,
+        curveSegments:  segs * 3,
+      });
+
+      geo.center();
+      // The shape lives in XY and extrudes along Z.
+      // Rotate -90° around X so the flat footprint lies in XZ (Y becomes vertical).
+      geo.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
+      return geo;
+    }
+
+    // ── Gold edge outline helper ─────────────────────────────────
+    // Adds crisp rectangular gold edge lines that frame the rounded body.
+    function addGoldEdges(mesh, w, h, d, mat) {
+      const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d)),
+        mat
+      );
+      mesh.add(edges);
+    }
+
+    // ── Materials ────────────────────────────────────────────────
+    // Deep velvet navy — high roughness, zero metalness for matte fabric feel
+    const caseMat  = new THREE.MeshStandardMaterial({ color: 0x0B1622, roughness: 0.88, metalness: 0.0 });
+    const goldLine = new THREE.LineBasicMaterial({ color: 0xD4AF37 });
+    const creamMat = new THREE.MeshStandardMaterial({ color: 0xF0E8DC, roughness: 0.94 });
+    const slotMat  = new THREE.MeshStandardMaterial({ color: 0xE0D5C5, roughness: 0.97 });
+    const ringMat  = new THREE.MeshStandardMaterial({ color: 0xFFD700, metalness: 0.92, roughness: 0.12 });
+
+    // ── Dimensions (50% of original) ─────────────────────────────
+    const BW = 1.5, BH = 0.75, BD = 1.5; // base width / height / depth
+    const LH = 0.15;                       // lid height
+    const BR = 0.08;                       // base bevel radius
+    const LR = 0.04;                       // lid bevel radius
+    const MAX_OPEN = -(110 * Math.PI / 180);
+
+    // ── Case group ───────────────────────────────────────────────
     const caseGroup = new THREE.Group();
-    caseGroup.rotation.x = -0.25;
+    caseGroup.rotation.x = -0.25;  // tilt toward camera to show interior
     caseGroup.position.y = -0.4;
     scene.add(caseGroup);
 
     // ─ Base ─
-    const baseGeo  = new THREE.BoxGeometry(BASE_W, BASE_H, BASE_D);
-    const baseMesh = new THREE.Mesh(baseGeo, caseMat);
+    const baseMesh = new THREE.Mesh(roundedBoxGeo(BW, BH, BD, BR, 5), caseMat);
     caseGroup.add(baseMesh);
-    baseMesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(baseGeo), goldMat));
+    addGoldEdges(baseMesh, BW, BH, BD, goldLine);
 
-    // Interior cushion (cream pad sitting just inside the top of the base)
-    const cushGeo  = new THREE.BoxGeometry(BASE_W - 0.15, 0.1, BASE_D - 0.15);
-    const cushMesh = new THREE.Mesh(cushGeo, creamMat);
-    cushMesh.position.y = BASE_H / 2 - 0.05;
+    // Cream cushion inside base (near top, visible when lid opens)
+    const cushMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(BW - 0.12, 0.06, BD - 0.12),
+      creamMat
+    );
+    cushMesh.position.y = BH / 2 - 0.03;
     baseMesh.add(cushMesh);
 
     // Ring slot groove on the cushion
-    const slotGeo  = new THREE.BoxGeometry(0.22, 0.14, BASE_D - 0.3);
-    const slotMesh = new THREE.Mesh(slotGeo, slotMat);
-    slotMesh.position.set(0, 0.12, 0);
+    const slotMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.11, 0.07, BD - 0.18),
+      slotMat
+    );
+    slotMesh.position.y = 0.065;
     cushMesh.add(slotMesh);
 
-    // ─ Lid pivot ─
-    // Hinge sits at the back-top edge of the base in caseGroup space
+    // ─ Lid pivot group — hinge at back-top edge of base ─
     const lidPivot = new THREE.Group();
-    lidPivot.position.set(0, BASE_H / 2, -BASE_D / 2);
+    lidPivot.position.set(0, BH / 2, -BD / 2);
     caseGroup.add(lidPivot);
 
-    // Lid mesh: in pivot space its back edge (z = -BASE_D/2) aligns with z = 0 (hinge)
-    const lidGeo  = new THREE.BoxGeometry(BASE_W, LID_H, BASE_D);
-    const lidMesh = new THREE.Mesh(lidGeo, caseMat);
-    lidMesh.position.set(0, LID_H / 2, BASE_D / 2);
+    const lidMesh = new THREE.Mesh(roundedBoxGeo(BW, LH, BD, LR, 4), caseMat);
+    lidMesh.position.set(0, LH / 2, BD / 2);
     lidPivot.add(lidMesh);
-    lidMesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(lidGeo), goldMat));
+    addGoldEdges(lidMesh, BW, LH, BD, goldLine);
 
     // Cream lining on the inside face of the lid
-    const lidIntGeo  = new THREE.BoxGeometry(BASE_W - 0.1, 0.025, BASE_D - 0.1);
-    const lidIntMesh = new THREE.Mesh(lidIntGeo, creamMat);
-    lidIntMesh.position.set(0, -(LID_H / 2) + 0.013, 0);
+    const lidIntMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(BW - 0.08, 0.018, BD - 0.08),
+      creamMat
+    );
+    lidIntMesh.position.set(0, -(LH / 2) + 0.009, 0);
     lidMesh.add(lidIntMesh);
 
-    // ── Case animation state ────────────────────────────────────
-    // px/py: world-space target for caseGroup position
+    // ─ Ring ─
+    // Torus: radius 0.18, tube 0.038 — stands upright in the slot
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.18, 0.038, 14, 64),
+      ringMat
+    );
+    ring.rotation.x = Math.PI / 2; // upright
+    ring.visible    = false;
+    caseGroup.add(ring);
+
+    // Y positions for ring in caseGroup space
+    const RING_Y_HIDDEN = 0.05;  // inside base, occluded by walls
+    const RING_Y_SHOWN  = 0.68;  // above the open case
+
+    // ── Animation state ──────────────────────────────────────────
     const caseAnim = { lidTarget: 0, zRot: 0, px: 0, py: -0.4 };
 
-    // ── Coordinate helper ───────────────────────────────────────
-    // Converts landmark-canvas pixel coords (unmirrored space) → Three.js world XY
     function screenToWorld(px, py) {
       const w = window.innerWidth, h = window.innerHeight;
-      const ndcX = ((w - px) / w) * 2 - 1; // flip X for mirror
+      const ndcX = ((w - px) / w) * 2 - 1; // flip X to match mirror
       const ndcY = -((py / h) * 2 - 1);
-      const halfH = Math.tan((60 * Math.PI / 180) / 2) * 5; // camera z = 5
-      return { x: ndcX * halfH * (w / h), y: ndcY * halfH };
+      const halfH = Math.tan((60 * Math.PI / 180) / 2) * 5;
+      const halfW = halfH * (w / h);
+      const MARGIN = 1.2; // world units from edge — case never exits screen
+      return {
+        x: Math.max(-(halfW - MARGIN), Math.min(halfW - MARGIN, ndcX * halfW)),
+        y: Math.max(-(halfH - MARGIN), Math.min(halfH - MARGIN, ndcY * halfH)),
+      };
     }
 
-    // ── Public API for gesture system ───────────────────────────
     function updateCaseOpen(openPercent, tiltAngle, cx, cy) {
       if (!spaceOpen) {
         caseAnim.lidTarget = openPercent * MAX_OPEN;
       }
-      caseAnim.zRot = -tiltAngle * (Math.PI / 180);
+      const clampedTilt = Math.max(-30, Math.min(30, tiltAngle));
+      caseAnim.zRot = -clampedTilt * (Math.PI / 180);
       if (cx != null) {
         const wp    = screenToWorld(cx, cy);
         caseAnim.px = wp.x;
@@ -195,7 +268,7 @@
       }
     }
 
-    // ── Spacebar test ───────────────────────────────────────────
+    // ── Spacebar test ────────────────────────────────────────────
     let spaceOpen = false;
     document.addEventListener('keydown', e => {
       if (e.code !== 'Space') return;
@@ -204,21 +277,38 @@
       caseAnim.lidTarget = spaceOpen ? MAX_OPEN : 0;
     });
 
-    // ── Animate loop ────────────────────────────────────────────
+    // ── Animate loop ─────────────────────────────────────────────
     (function animate() {
       requestAnimationFrame(animate);
-      const L = 0.1;
-      lidPivot.rotation.x  += (caseAnim.lidTarget - lidPivot.rotation.x)  * L;
-      caseGroup.rotation.z += (caseAnim.zRot      - caseGroup.rotation.z) * L;
-      caseGroup.position.x += (caseAnim.px        - caseGroup.position.x) * L;
-      caseGroup.position.y += (caseAnim.py        - caseGroup.position.y) * L;
+      lidPivot.rotation.x  += (caseAnim.lidTarget - lidPivot.rotation.x)  * 0.10;
+      caseGroup.rotation.z += (caseAnim.zRot      - caseGroup.rotation.z) * 0.08;
+      caseGroup.position.x += (caseAnim.px        - caseGroup.position.x) * 0.05;
+      caseGroup.position.y += (caseAnim.py        - caseGroup.position.y) * 0.05;
+
+      // Ring: rise out of case once lid is 30% open
+      const currentOpen = Math.abs(lidPivot.rotation.x) / Math.abs(MAX_OPEN);
+      const rawFactor   = Math.max(0, (currentOpen - 0.3) / 0.7);
+      const eased       = rawFactor * rawFactor * (3 - 2 * rawFactor); // smoothstep
+
+      ring.visible    = currentOpen > 0.2;
+      ring.position.y = RING_Y_HIDDEN + eased * (RING_Y_SHOWN - RING_Y_HIDDEN);
+      ring.rotation.z = eased * 0.15; // slight lean as it rises
+
       renderer.render(scene, camera3d);
     })();
 
-    // ── Gesture state ───────────────────────────────────────────
-    const CLOSE_DIST = 150, OPEN_DIST = 500, SMOOTH_LEN = 5, DECAY_RATE = 0.08;
-    const smoothBuf  = [];
+    // ── Gesture state ────────────────────────────────────────────
+    const CLOSE_DIST  = 150, OPEN_DIST = 500, SMOOTH_LEN = 5, DECAY_RATE = 0.08;
+    const OPEN_RATE   = 0.05;   // max openPercent change per frame
+    const JUMP_THRESH = 0.18;   // normalized wrist jump distance that triggers frame rejection
+    const smoothBuf   = [];
+    let prevWrists    = null;   // [{x,y}, {x,y}] in normalized coords from last valid frame
     let gesture = { openPercent: 0, tiltAngle: 0, centerX: 0, centerY: 0, bothHands: false };
+
+    function wristDist(a, b) {
+      const dx = a.x - b.x, dy = a.y - b.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
 
     function calcGesture(multiHandLandmarks) {
       const w = landmarkCanvas.width, h = landmarkCanvas.height;
@@ -226,11 +316,25 @@
       if (!multiHandLandmarks || multiHandLandmarks.length < 2) {
         gesture.bothHands   = false;
         gesture.openPercent = Math.max(0, gesture.openPercent - DECAY_RATE);
+        prevWrists = null;
         return;
       }
 
-      gesture.bothHands = true;
+      // Stability check: reject frame if wrists jumped too far from last frame.
+      // Try both pairings (hands can swap index between frames).
       const p0 = multiHandLandmarks[0][0], p1 = multiHandLandmarks[1][0];
+      const curr = [{ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }];
+      if (prevWrists) {
+        const jumpA = Math.max(wristDist(curr[0], prevWrists[0]), wristDist(curr[1], prevWrists[1]));
+        const jumpB = Math.max(wristDist(curr[0], prevWrists[1]), wristDist(curr[1], prevWrists[0]));
+        if (Math.min(jumpA, jumpB) > JUMP_THRESH) {
+          prevWrists = null; // reset anchor — next valid frame becomes the new baseline
+          return;
+        }
+      }
+      prevWrists = curr;
+
+      gesture.bothHands = true;
       const x0 = p0.x * w, y0 = p0.y * h;
       const x1 = p1.x * w, y1 = p1.y * h;
       const dx = x1 - x0, dy = y1 - y0;
@@ -239,13 +343,18 @@
       const raw = Math.min(1, Math.max(0, (dist - CLOSE_DIST) / (OPEN_DIST - CLOSE_DIST)));
       smoothBuf.push(raw);
       if (smoothBuf.length > SMOOTH_LEN) smoothBuf.shift();
-      gesture.openPercent = smoothBuf.reduce((s, v) => s + v, 0) / smoothBuf.length;
-      gesture.tiltAngle   = Math.atan2(dy, dx) * (180 / Math.PI);
-      gesture.centerX     = (x0 + x1) / 2;
-      gesture.centerY     = (y0 + y1) / 2;
+      const smoothed = smoothBuf.reduce((s, v) => s + v, 0) / smoothBuf.length;
+
+      // Rate-limit: openPercent changes at most OPEN_RATE per frame
+      const delta = Math.max(-OPEN_RATE, Math.min(OPEN_RATE, smoothed - gesture.openPercent));
+      gesture.openPercent += delta;
+
+      gesture.tiltAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+      gesture.centerX   = (x0 + x1) / 2;
+      gesture.centerY   = (y0 + y1) / 2;
     }
 
-    // ── Landmark & gesture drawing ──────────────────────────────
+    // ── Drawing ──────────────────────────────────────────────────
     function drawGestureOverlay(multiHandLandmarks) {
       const w = landmarkCanvas.width, h = landmarkCanvas.height;
       if (!multiHandLandmarks || multiHandLandmarks.length < 2) return;
@@ -255,7 +364,7 @@
       const x1 = p1.x * w, y1 = p1.y * h;
 
       lCtx.save();
-      lCtx.globalAlpha = 0.4 + gesture.openPercent * 0.6;
+      lCtx.globalAlpha = 0.35 + gesture.openPercent * 0.65;
       lCtx.strokeStyle = '#ffee00';
       lCtx.lineWidth   = 2;
       lCtx.setLineDash([8, 6]);
@@ -305,7 +414,7 @@
       drawGestureOverlay(multiHandLandmarks);
     }
 
-    // ── Debug panel ─────────────────────────────────────────────
+    // ── Debug panel ──────────────────────────────────────────────
     function updateDebug(multiHandLandmarks, multiHandedness) {
       const count    = multiHandLandmarks?.length ?? 0;
       const detected = count > 0;
@@ -328,16 +437,16 @@
       ].join('\n');
     }
 
-    // ── MediaPipe Hands ─────────────────────────────────────────
+    // ── MediaPipe Hands ──────────────────────────────────────────
     function initHands() {
       const hands = new Hands({
         locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
       });
       hands.setOptions({
-        maxNumHands:             2,
-        modelComplexity:         1,
-        minDetectionConfidence:  0.7,
-        minTrackingConfidence:   0.6,
+        maxNumHands:            2,
+        modelComplexity:        1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence:  0.6,
       });
       hands.onResults(results => {
         calcGesture(results.multiHandLandmarks);
@@ -357,7 +466,7 @@
       }).start();
     }
 
-    // ── Camera stream ───────────────────────────────────────────
+    // ── Camera stream ────────────────────────────────────────────
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
