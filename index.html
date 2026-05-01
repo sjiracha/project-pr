@@ -366,43 +366,6 @@
       debugEl.style.display = debugVisible ? 'block' : 'none';
     });
 
-    // ── Animate loop ─────────────────────────────────────────────
-    (function animate() {
-      requestAnimationFrame(animate);
-
-      // Visibility: case appears only when both hands are tracked
-      caseGroup.visible = gesture.bothHands;
-
-      lidPivot.rotation.x  += (caseAnim.lidTarget - lidPivot.rotation.x)  * 0.10;
-      caseGroup.rotation.x += (caseAnim.xRot      - caseGroup.rotation.x) * 0.08;
-      caseGroup.rotation.z += (caseAnim.zRot      - caseGroup.rotation.z) * 0.04;
-      caseGroup.position.x += (caseAnim.px        - caseGroup.position.x) * 0.03;
-      caseGroup.position.y += (caseAnim.py        - caseGroup.position.y) * 0.03;
-
-      // Ring lifecycle driven by current lid-open ratio
-      const currentOpen = Math.abs(lidPivot.rotation.x) / Math.abs(MAX_OPEN);
-
-      if (currentOpen < 0.3) {
-        // Hidden — fully tucked inside the closed case
-        ringGroup.visible = false;
-      } else {
-        ringGroup.visible = true;
-
-        // 0.3 → 0.6: scale 0 → 1 with smoothstep easing, also rises out of the case
-        const rawT  = Math.min(1, (currentOpen - 0.3) / 0.3);
-        const eased = rawT * rawT * (3 - 2 * rawT);
-        ringGroup.scale.setScalar(eased);
-        ringGroup.position.y = RING_Y_HIDDEN + eased * (RING_Y_SHOWN - RING_Y_HIDDEN);
-
-        // 0.6+: slow Y-axis spin to catch the light
-        if (currentOpen > 0.6) {
-          ringGroup.rotation.y += 0.01;
-        }
-      }
-
-      renderer.render(scene, camera3d);
-    })();
-
     // ── Gesture state ────────────────────────────────────────────
     const CLOSE_DIST   = 150, OPEN_DIST = 500, SMOOTH_LEN = 5, DECAY_RATE = 0.08;
     const OPEN_RATE    = 0.05;  // max openPercent change per frame
@@ -473,6 +436,43 @@
       gesture.centerX = centerXBuf.reduce((s, v) => s + v, 0) / centerXBuf.length;
       gesture.centerY = centerYBuf.reduce((s, v) => s + v, 0) / centerYBuf.length;
     }
+
+    // ── Animate loop ─────────────────────────────────────────────
+    (function animate() {
+      requestAnimationFrame(animate);
+
+      // Visibility: case appears only when both hands are tracked
+      caseGroup.visible = gesture.bothHands;
+
+      lidPivot.rotation.x  += (caseAnim.lidTarget - lidPivot.rotation.x)  * 0.10;
+      caseGroup.rotation.x += (caseAnim.xRot      - caseGroup.rotation.x) * 0.08;
+      caseGroup.rotation.z += (caseAnim.zRot      - caseGroup.rotation.z) * 0.04;
+      caseGroup.position.x += (caseAnim.px        - caseGroup.position.x) * 0.03;
+      caseGroup.position.y += (caseAnim.py        - caseGroup.position.y) * 0.03;
+
+      // Ring lifecycle driven by current lid-open ratio
+      const currentOpen = Math.abs(lidPivot.rotation.x) / Math.abs(MAX_OPEN);
+
+      if (currentOpen < 0.3) {
+        // Hidden — fully tucked inside the closed case
+        ringGroup.visible = false;
+      } else {
+        ringGroup.visible = true;
+
+        // 0.3 → 0.6: scale 0 → 1 with smoothstep easing, also rises out of the case
+        const rawT  = Math.min(1, (currentOpen - 0.3) / 0.3);
+        const eased = rawT * rawT * (3 - 2 * rawT);
+        ringGroup.scale.setScalar(eased);
+        ringGroup.position.y = RING_Y_HIDDEN + eased * (RING_Y_SHOWN - RING_Y_HIDDEN);
+
+        // 0.6+: slow Y-axis spin to catch the light
+        if (currentOpen > 0.6) {
+          ringGroup.rotation.y += 0.01;
+        }
+      }
+
+      renderer.render(scene, camera3d);
+    })();
 
     // ── Drawing ──────────────────────────────────────────────────
     function drawGestureOverlay(multiHandLandmarks) {
