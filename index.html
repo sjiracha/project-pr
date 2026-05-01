@@ -56,7 +56,7 @@
   <canvas id="three-canvas"></canvas>
   <div id="debug">카메라 초기화 중...</div>
   <div id="error-msg"></div>
-  <div id="hint">[SPACE] 뚜껑 열기 테스트</div>
+  <div id="hint">[D] 디버그 랜드마크 토글</div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -198,6 +198,7 @@
     const caseGroup = new THREE.Group();
     caseGroup.rotation.x = 0;
     caseGroup.position.y = -0.4;
+    caseGroup.video = false; //shown only when both hands are detected
     scene.add(caseGroup);
 
     // ─ Base ─
@@ -317,7 +318,8 @@
     // ── Animation state ──────────────────────────────────────────
     // xRot: hand-driven X rotation; camera is now elevated so no base tilt needed
     const BASE_XTILT = 0;
-    const caseAnim = { lidTarget: 0, xRot: BASE_XTILT, px: 0, py: -0.4 };
+    const Z_TILT_GAIN = 0.4; // softer than 1:1 - case rolls 0.4x the hand-line tilt
+    const caseAnim = { lidTarget: 0, xRot: BASE_XTILT, zRot: 0, px: 0, py: -0.4 };
 
     function screenToWorld(px, py) {
       const w = window.innerWidth, h = window.innerHeight;
@@ -333,9 +335,8 @@
     }
 
     function updateCaseOpen(openPercent, _tiltAngle, cx, cy) {
-      if (!spaceOpen) {
-        caseAnim.lidTarget = openPercent * MAX_OPEN;
-      }
+      caseAnim.lidTarget = openPercent * MAX_OPEN;
+
       if (cx != null) {
         // Position
         const wp    = screenToWorld(cx, cy);
@@ -350,23 +351,31 @@
         const xDeg     = (0.5 - normY) * 30;        // ±15°
         const xClamped = Math.max(-25, Math.min(25, xDeg)) * (Math.PI / 180);
         caseAnim.xRot  = BASE_XTILT + xClamped;
+
+        // Z rotation from hand-line tilt - softened by Z_TILT_GAIN
+        caseAnim.zRot = tiltAngle * (Math.PI / 180) * Z_TILT_GAIN;
       }
     }
 
-    // ── Spacebar test ────────────────────────────────────────────
-    let spaceOpen = false;
+    // ── Debug landmark visibility toggle ('d' key) ───────────────
+    let debugVisible = true;
     document.addEventListener('keydown', e => {
-      if (e.code !== 'Space') return;
-      e.preventDefault();
-      spaceOpen = !spaceOpen;
-      caseAnim.lidTarget = spaceOpen ? MAX_OPEN : 0;
+      if (e.key !== 'd' && e.key !== 'D') return;
+      debugVisible = !debugVisible;
+      landmarkCanvas.style.display = debugVisible ? 'block' : 'none';
+      debugEl.style.display = debugVisible ? 'block' : 'none';
     });
 
     // ── Animate loop ─────────────────────────────────────────────
     (function animate() {
       requestAnimationFrame(animate);
+
+      // Visibility: case appears only when both hands are tracked
+      caseGroup.visible = gesture.bothHands;
+
       lidPivot.rotation.x  += (caseAnim.lidTarget - lidPivot.rotation.x)  * 0.10;
       caseGroup.rotation.x += (caseAnim.xRot      - caseGroup.rotation.x) * 0.08;
+      caseGroup.rotation.z += (caseAnim.zRot      - caseGroup.rotation.z) * 0.04;
       caseGroup.position.x += (caseAnim.px        - caseGroup.position.x) * 0.03;
       caseGroup.position.y += (caseAnim.py        - caseGroup.position.y) * 0.03;
 
@@ -542,7 +551,7 @@
       debugEl.textContent = [
         `손 감지: ${detected ? '✅' : '❌'} ${count}개`,
         `종류: ${labels}`,
-        `openPercent: ${gesture.openPercent.toFixed(2)}${spaceOpen ? '  [SPACE]' : ''}`,
+        `openPercent: ${gesture.openPercent.toFixed(2)}`,
         `tiltAngle: ${gesture.openPercent > 0 ? gesture.tiltAngle.toFixed(1) + '°' : '-'}`,
         `상태: ${state}`,
       ].join('\n');
