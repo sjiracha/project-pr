@@ -253,10 +253,11 @@
 
     // Cream lining on the inside face of the lid
     const lidIntMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(BW - 0.08, 0.018, BD - 0.08),
+      new THREE.PlaneGeometry(BW - 0.16, BD - 0.16),
       creamMat
     );
-    lidIntMesh.position.set(0, -(LH / 2) + 0.009, 0);
+    lidIntMesh.rotation.x = Math.PI / 2;
+    lidIntMesh.position.y = -LH / 2 + 0.03;
     lidMesh.add(lidIntMesh);
 
     // ─ Ring ─
