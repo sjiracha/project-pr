@@ -89,7 +89,8 @@
 
     const scene    = new THREE.Scene();
     const camera3d = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-    camera3d.position.set(0, 0, 5);
+    camera3d.position.set(0, 2, 8);
+    camera3d.lookAt(0, 0, 0);
 
     function resizeAll() {
       const w = window.innerWidth, h = window.innerHeight;
@@ -182,7 +183,7 @@
 
     // ── Case group ───────────────────────────────────────────────
     const caseGroup = new THREE.Group();
-    caseGroup.rotation.x = -0.25;  // tilt toward camera to show interior
+    caseGroup.rotation.x = 0;
     caseGroup.position.y = -0.4;
     scene.add(caseGroup);
 
@@ -191,37 +192,54 @@
     caseGroup.add(baseMesh);
     addGoldEdges(baseMesh, BW, BH, BD, goldLine);
 
-    // Interior cushion — rebuilt with polygonOffset + depthWrite:false to eliminate z-fighting.
-    // Top of cushion sits at BH/2 - 0.12 = 0.255, well clear of base top face (0.375).
-    // Bottom of cushion at 0.195, well above base floor (-0.375 + 0.05 safety = -0.325).
-    const cushMat2 = new THREE.MeshStandardMaterial({
-      color:               0xF0E8DC,
-      roughness:           0.94,
-      depthWrite:          false,
-      polygonOffset:       true,
-      polygonOffsetFactor: -1,
+    // ─ Interior walls (PlaneGeometry) ─────────────────────────────────────
+    // Each plane is strictly inside the rounded exterior — never coplanar with
+    // any outer face, so z-fighting is impossible by construction.
+    const INSET  = 0.12;
+    const iW     = BW - INSET * 2;  // 1.26 inner width  (X)
+    const iD     = BD - INSET * 2;  // 1.26 inner depth  (Z)
+    const iH     = BH - INSET * 2;  // 0.51 inner height (Y)
+    const innerMat = new THREE.MeshStandardMaterial({
+      color:     0xF5F0E8,
+      roughness: 0.90,
+      side:      THREE.FrontSide,
     });
-    const cushMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(BW - 0.14, 0.06, BD - 0.14),
-      cushMat2
-    );
-    cushMesh.position.y = BH / 2 - 0.15; // center at 0.225; top 0.255, bottom 0.195
-    baseMesh.add(cushMesh);
 
-    // Ring slot groove on the cushion
-    const slotMat2 = new THREE.MeshStandardMaterial({
-      color:               0xE0D5C5,
-      roughness:           0.97,
-      depthWrite:          false,
-      polygonOffset:       true,
-      polygonOffsetFactor: -2,
-    });
-    const slotMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.11, 0.065, BD - 0.20),
-      slotMat2
-    );
-    slotMesh.position.y = 0.062;
-    cushMesh.add(slotMesh);
+    // Floor — faces +Y, at bottom of interior cavity
+    const iFloor = new THREE.Mesh(new THREE.PlaneGeometry(iW, iD), innerMat);
+    iFloor.rotation.x = -Math.PI / 2;
+    iFloor.position.y = -BH / 2 + INSET;  // -0.255, 0.12 above exterior bottom face
+    baseMesh.add(iFloor);
+
+    // Front wall — at +Z face, normal faces -Z toward interior
+    const iFront = new THREE.Mesh(new THREE.PlaneGeometry(iW, iH), innerMat);
+    iFront.rotation.y = Math.PI;
+    iFront.position.set(0, 0,  BD / 2 - INSET);  // z = +0.63
+    baseMesh.add(iFront);
+
+    // Back wall — at -Z face, normal faces +Z toward interior
+    const iBack = new THREE.Mesh(new THREE.PlaneGeometry(iW, iH), innerMat);
+    // default normal = +Z ✓
+    iBack.position.set(0, 0, -BD / 2 + INSET);  // z = -0.63
+    baseMesh.add(iBack);
+
+    // Left wall — at -X face, normal faces +X toward interior
+    const iLeft = new THREE.Mesh(new THREE.PlaneGeometry(iD, iH), innerMat);
+    iLeft.rotation.y = Math.PI / 2;
+    iLeft.position.set(-BW / 2 + INSET, 0, 0);  // x = -0.63
+    baseMesh.add(iLeft);
+
+    // Right wall — at +X face, normal faces -X toward interior
+    const iRight = new THREE.Mesh(new THREE.PlaneGeometry(iD, iH), innerMat);
+    iRight.rotation.y = -Math.PI / 2;
+    iRight.position.set( BW / 2 - INSET, 0, 0);  // x = +0.63
+    baseMesh.add(iRight);
+
+    // Ring cushion pad — horizontal surface near the top where the ring sits
+    const ringPad = new THREE.Mesh(new THREE.PlaneGeometry(iW, iD), innerMat);
+    ringPad.rotation.x = -Math.PI / 2;
+    ringPad.position.y = BH / 2 - 0.10;  // 0.275, clearly below top rim (0.375)
+    baseMesh.add(ringPad);
 
     // ─ Lid pivot group — hinge at back-top edge of base ─
     const lidPivot = new THREE.Group();
@@ -252,19 +270,19 @@
     caseGroup.add(ring);
 
     // Y positions for ring in caseGroup space
-    const RING_Y_HIDDEN = 0.05;  // inside base, occluded by walls
-    const RING_Y_SHOWN  = 0.68;  // above the open case
+    const RING_Y_HIDDEN = 0.28;  // at ring-pad level (BH/2 - 0.10 = 0.275), sits in the slot
+    const RING_Y_SHOWN  = 0.80;  // above the open case
 
     // ── Animation state ──────────────────────────────────────────
-    // xRot: hand-driven X rotation; -0.25 rad is the default "look-down" starting angle
-    const BASE_XTILT = -0.25;
+    // xRot: hand-driven X rotation; camera is now elevated so no base tilt needed
+    const BASE_XTILT = 0;
     const caseAnim = { lidTarget: 0, xRot: BASE_XTILT, px: 0, py: -0.4 };
 
     function screenToWorld(px, py) {
       const w = window.innerWidth, h = window.innerHeight;
       const ndcX = ((w - px) / w) * 2 - 1; // flip X to match mirror
       const ndcY = -((py / h) * 2 - 1);
-      const halfH = Math.tan((60 * Math.PI / 180) / 2) * 5;
+      const halfH = Math.tan((60 * Math.PI / 180) / 2) * 8; // camera z-component = 8
       const halfW = halfH * (w / h);
       const MARGIN = 1.2; // world units from edge — case never exits screen
       return {
@@ -288,7 +306,7 @@
         //   cy = height (bottom)      → -25° (camera looks up)
         //   cy = height/2 (middle)    →   0° + BASE_XTILT
         const normY    = cy / landmarkCanvas.height; // 0 = top, 1 = bottom
-        const xDeg     = (0.5 - normY) * 50;        // ±25°
+        const xDeg     = (0.5 - normY) * 30;        // ±15°
         const xClamped = Math.max(-25, Math.min(25, xDeg)) * (Math.PI / 180);
         caseAnim.xRot  = BASE_XTILT + xClamped;
       }
