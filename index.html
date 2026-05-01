@@ -174,6 +174,19 @@
     const slotMat  = new THREE.MeshStandardMaterial({ color: 0xE0D5C5, roughness: 0.97 });
     const ringMat  = new THREE.MeshStandardMaterial({ color: 0xFFD700, metalness: 0.92, roughness: 0.12 });
 
+    // Diamond material — B-mode (metalness-driven sparkle, no envmap required)
+    const diaMat = new THREE.MeshPhysicalMaterial({
+      color:              0xFFFFFF,
+      metalness:          0.5,
+      roughness:          0.0,
+      clearcoat:          1.0,
+      clearcoatRoughness: 0.0,
+      reflectivity:       1.0,
+      emissive:           0xFFFFFF,
+      emissiveIntensity:  0.05,
+      flatShading:        true,
+    });
+
     // ── Dimensions (50% of original) ─────────────────────────────
     const BW = 1.5, BH = 0.75, BD = 1.5; // base width / height / depth
     const LH = 0.15;                       // lid height
@@ -260,17 +273,44 @@
     lidIntMesh.position.y = -LH / 2 + 0.03;
     lidMesh.add(lidIntMesh);
 
-    // ─ Ring ─
-    // Torus: radius 0.18, tube 0.038 — stands upright in the slot
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.18, 0.038, 14, 64),
+    // ─ Ring assembly ─────────────────────────────────────────────
+    // ringGroup holds: band (torus) + main diamond (octahedron) + 4 accent stones (spheres).
+    // The whole group stands upright facing the camera (O shape) inside the case.
+    const ringGroup = new THREE.Group();
+    ringGroup.visible = false;
+    caseGroup.add(ringGroup);
+
+    // Band — yellow gold torus
+    const BAND_RADIUS = 0.18;
+    const BAND_TUBE   = 0.038;
+    const band = new THREE.Mesh(
+      new THREE.TorusGeometry(BAND_RADIUS, BAND_TUBE, 16, 64),
       ringMat
     );
-    ring.rotation.x = 0; // default torus lies in XY plane → faces camera (O shape); PI/2 would make it horizontal (---)
-    ring.visible    = false;
-    caseGroup.add(ring);
+    ringGroup.add(band);
 
-    // Y positions for ring in caseGroup space
+    // Main diamond — octahedron stretched vertically into a brilliant-cut profile
+    const diaGeo = new THREE.OctahedronGeometry(0.06, 0);
+    diaGeo.scale(1, 1.4, 1);
+    const diamond = new THREE.Mesh(diaGeo, diaMat);
+    // Sits on top of the band
+    diamond.position.set(0, BAND_RADIUS + 0.05, 0);
+    ringGroup.add(diamond);
+
+    // Accent stones — 4 small spheres flanking the main diamond along the band's top arc
+    const accentGeo = new THREE.SphereGeometry(0.018, 12, 10);
+    const ACCENT_ANGLES = [-0.45, -0.18, 0.18, 0.45]; // radians from top of band
+    ACCENT_ANGLES.forEach(angle => {
+      const stone = new THREE.Mesh(accentGeo, diaMat);
+      stone.position.set(
+        Math.sin(angle) * BAND_RADIUS,
+        Math.cos(angle) * BAND_RADIUS,
+        0
+      );
+      ringGroup.add(stone);
+    });
+
+    // Y positions for ringGroup in caseGroup space
     const RING_Y_HIDDEN = 0.28;  // at ring-pad level (BH/2 - 0.10 = 0.275), sits in the slot
     const RING_Y_SHOWN  = 0.80;  // above the open case
 
@@ -330,14 +370,26 @@
       caseGroup.position.x += (caseAnim.px        - caseGroup.position.x) * 0.03;
       caseGroup.position.y += (caseAnim.py        - caseGroup.position.y) * 0.03;
 
-      // Ring: rise out of case once lid is 30% open
+      // Ring lifecycle driven by current lid-open ratio
       const currentOpen = Math.abs(lidPivot.rotation.x) / Math.abs(MAX_OPEN);
-      const rawFactor   = Math.max(0, (currentOpen - 0.3) / 0.7);
-      const eased       = rawFactor * rawFactor * (3 - 2 * rawFactor); // smoothstep
 
-      ring.visible    = currentOpen > 0.2;
-      ring.position.y = RING_Y_HIDDEN + eased * (RING_Y_SHOWN - RING_Y_HIDDEN);
-      ring.rotation.z = eased * 0.15; // slight lean as it rises
+      if (currentOpen < 0.3) {
+        // Hidden — fully tucked inside the closed case
+        ringGroup.visible = false;
+      } else {
+        ringGroup.visible = true;
+
+        // 0.3 → 0.6: scale 0 → 1 with smoothstep easing, also rises out of the case
+        const rawT  = Math.min(1, (currentOpen - 0.3) / 0.3);
+        const eased = rawT * rawT * (3 - 2 * rawT);
+        ringGroup.scale.setScalar(eased);
+        ringGroup.position.y = RING_Y_HIDDEN + eased * (RING_Y_SHOWN - RING_Y_HIDDEN);
+
+        // 0.6+: slow Y-axis spin to catch the light
+        if (currentOpen > 0.6) {
+          ringGroup.rotation.y += 0.01;
+        }
+      }
 
       renderer.render(scene, camera3d);
     })();
