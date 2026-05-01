@@ -28,6 +28,18 @@
       transform: scaleX(-1); /* mirror */
     }
 
+    /* 2D landmark debug overlay */
+    #landmark-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      transform: scaleX(-1); /* mirror to match video */
+    }
+
+    /* Three.js 3D overlay */
     #three-canvas {
       position: absolute;
       top: 0;
@@ -41,13 +53,13 @@
       position: absolute;
       top: 16px;
       left: 16px;
-      color: #0f0;
       font-family: monospace;
       font-size: 14px;
-      line-height: 1.6;
-      text-shadow: 0 0 4px #000;
+      line-height: 1.8;
+      text-shadow: 0 0 6px #000, 0 0 6px #000;
       z-index: 10;
       pointer-events: none;
+      white-space: pre;
     }
 
     #error-msg {
@@ -67,6 +79,7 @@
 <body>
 
   <video id="camera-video" autoplay playsinline muted></video>
+  <canvas id="landmark-canvas"></canvas>
   <canvas id="three-canvas"></canvas>
   <div id="debug">카메라 초기화 중...</div>
   <div id="error-msg"></div>
@@ -79,32 +92,140 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
   <script>
-    const video = document.getElementById('camera-video');
-    const canvas = document.getElementById('three-canvas');
-    const debug = document.getElementById('debug');
-    const errorMsg = document.getElementById('error-msg');
+    const video          = document.getElementById('camera-video');
+    const landmarkCanvas = document.getElementById('landmark-canvas');
+    const threeCanvas    = document.getElementById('three-canvas');
+    const debugEl        = document.getElementById('debug');
+    const errorMsg       = document.getElementById('error-msg');
+    const lCtx           = landmarkCanvas.getContext('2d');
+
+    // ── MediaPipe hand connection pairs ────────────────────────
+    const HAND_CONNECTIONS = [
+      [0,1],[1,2],[2,3],[3,4],       // thumb
+      [0,5],[5,6],[6,7],[7,8],       // index
+      [5,9],[9,10],[10,11],[11,12],  // middle
+      [9,13],[13,14],[14,15],[15,16],// ring
+      [13,17],[17,18],[18,19],[19,20],// pinky
+      [0,17],                        // palm base
+    ];
 
     // ── Three.js setup ──────────────────────────────────────────
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setClearColor(0x000000, 0); // transparent
+    renderer.setClearColor(0x000000, 0);
 
-    const scene = new THREE.Scene();
+    const scene    = new THREE.Scene();
     const camera3d = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
     camera3d.position.z = 5;
 
-    window.addEventListener('resize', () => {
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      camera3d.aspect = window.innerWidth / window.innerHeight;
+    function resizeAll() {
+      const w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h);
+      camera3d.aspect = w / h;
       camera3d.updateProjectionMatrix();
-    });
+      landmarkCanvas.width  = w;
+      landmarkCanvas.height = h;
+    }
+    window.addEventListener('resize', resizeAll);
 
-    function animate() {
+    (function animate() {
       requestAnimationFrame(animate);
       renderer.render(scene, camera3d);
+    })();
+
+    // ── Landmark drawing ────────────────────────────────────────
+    function drawLandmarks(multiHandLandmarks, multiHandedness) {
+      const w = landmarkCanvas.width;
+      const h = landmarkCanvas.height;
+      lCtx.clearRect(0, 0, w, h);
+
+      if (!multiHandLandmarks) return;
+
+      multiHandLandmarks.forEach((landmarks, i) => {
+        const label = multiHandedness[i]?.label ?? '';
+        const color = label === 'Left' ? '#00e5ff' : '#ff4081';
+
+        // connections
+        lCtx.strokeStyle = color;
+        lCtx.lineWidth   = 2;
+        lCtx.globalAlpha = 0.75;
+        HAND_CONNECTIONS.forEach(([a, b]) => {
+          lCtx.beginPath();
+          lCtx.moveTo(landmarks[a].x * w, landmarks[a].y * h);
+          lCtx.lineTo(landmarks[b].x * w, landmarks[b].y * h);
+          lCtx.stroke();
+        });
+
+        // dots
+        lCtx.globalAlpha = 1;
+        landmarks.forEach((pt, idx) => {
+          const isKey = [4, 8, 12, 16, 20, 0].includes(idx); // fingertips + wrist
+          lCtx.beginPath();
+          lCtx.arc(pt.x * w, pt.y * h, isKey ? 6 : 3, 0, Math.PI * 2);
+          lCtx.fillStyle = isKey ? '#fff' : color;
+          lCtx.fill();
+        });
+      });
     }
-    animate();
+
+    // ── Debug text ──────────────────────────────────────────────
+    function updateDebug(multiHandLandmarks, multiHandedness) {
+      const detected = multiHandLandmarks && multiHandLandmarks.length > 0;
+      debugEl.style.color = detected ? '#00ff88' : '#ff4444';
+
+      if (!detected) {
+        debugEl.textContent = '손 감지: ❌ 없음';
+        return;
+      }
+
+      const count = multiHandLandmarks.length;
+      const labels = multiHandedness.map(h => h.label === 'Left' ? '왼손' : '오른손').join(', ');
+
+      // thumb tip distance (landmark 4) between two hands
+      let distText = '-';
+      if (count === 2) {
+        const w = landmarkCanvas.width;
+        const h = landmarkCanvas.height;
+        const t0 = multiHandLandmarks[0][4];
+        const t1 = multiHandLandmarks[1][4];
+        const dx = (t0.x - t1.x) * w;
+        const dy = (t0.y - t1.y) * h;
+        distText = Math.round(Math.sqrt(dx * dx + dy * dy)) + 'px';
+      }
+
+      debugEl.textContent = [
+        `손 감지: ✅ ${count}개`,
+        `종류: ${labels}`,
+        `엄지 간격: ${distText}`,
+      ].join('\n');
+    }
+
+    // ── MediaPipe Hands ─────────────────────────────────────────
+    function initHands() {
+      const hands = new Hands({
+        locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+      });
+
+      hands.setOptions({
+        maxNumHands:          2,
+        modelComplexity:      1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence:  0.6,
+      });
+
+      hands.onResults(results => {
+        drawLandmarks(results.multiHandLandmarks, results.multiHandedness);
+        updateDebug(results.multiHandLandmarks, results.multiHandedness);
+      });
+
+      const mpCamera = new Camera(video, {
+        onFrame: async () => { await hands.send({ image: video }); },
+        width: 1280,
+        height: 720,
+      });
+      mpCamera.start();
+    }
 
     // ── Camera stream ───────────────────────────────────────────
     async function startCamera() {
@@ -116,17 +237,17 @@
         video.srcObject = stream;
         await video.play();
 
-        const track = stream.getVideoTracks()[0];
-        const settings = track.getSettings();
-        debug.textContent = [
-          '카메라: ON',
-          `해상도: ${settings.width} x ${settings.height}`,
-          '손 감지: 대기 중',
-        ].join('\n');
+        resizeAll();
+
+        const settings = stream.getVideoTracks()[0].getSettings();
+        debugEl.style.color = '#aaa';
+        debugEl.textContent = `카메라: ON  (${settings.width}×${settings.height})\n손 감지: 초기화 중...`;
+
+        initHands();
       } catch (err) {
         errorMsg.style.display = 'block';
         errorMsg.textContent = `카메라 오류: ${err.message}\n카메라 권한을 허용해주세요.`;
-        debug.textContent = '카메라: 오류';
+        debugEl.textContent = '카메라: 오류';
         console.error(err);
       }
     }
