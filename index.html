@@ -134,6 +134,87 @@
       renderer.render(scene, camera3d);
     })();
 
+    // ── Gesture state ───────────────────────────────────────────
+    const CLOSE_DIST  = 150; // px — fully closed threshold
+    const OPEN_DIST   = 500; // px — fully open threshold
+    const SMOOTH_LEN  = 5;   // moving-average window size
+    const DECAY_RATE  = 0.08; // per-frame decay when hands are absent
+
+    const smoothBuf = [];    // ring buffer for openPercent smoothing
+    let gesture = {
+      openPercent: 0,
+      tiltAngle:   0,
+      centerX:     0,
+      centerY:     0,
+    };
+
+    function calcGesture(multiHandLandmarks) {
+      const w = landmarkCanvas.width;
+      const h = landmarkCanvas.height;
+
+      if (!multiHandLandmarks || multiHandLandmarks.length < 2) {
+        // gradually decay to 0
+        const raw = gesture.openPercent - DECAY_RATE;
+        gesture.openPercent = Math.max(0, raw);
+        return;
+      }
+
+      const p0 = multiHandLandmarks[0][0]; // wrist / palm center
+      const p1 = multiHandLandmarks[1][0];
+      const x0 = p0.x * w, y0 = p0.y * h;
+      const x1 = p1.x * w, y1 = p1.y * h;
+
+      const dx   = x1 - x0;
+      const dy   = y1 - y0;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // raw openPercent [0,1]
+      const raw = Math.min(1, Math.max(0, (dist - CLOSE_DIST) / (OPEN_DIST - CLOSE_DIST)));
+
+      // moving-average smoothing
+      smoothBuf.push(raw);
+      if (smoothBuf.length > SMOOTH_LEN) smoothBuf.shift();
+      const smoothed = smoothBuf.reduce((s, v) => s + v, 0) / smoothBuf.length;
+
+      gesture.openPercent = smoothed;
+      gesture.tiltAngle   = Math.atan2(dy, dx) * (180 / Math.PI);
+      gesture.centerX     = (x0 + x1) / 2;
+      gesture.centerY     = (y0 + y1) / 2;
+    }
+
+    function drawGestureOverlay(multiHandLandmarks) {
+      const w = landmarkCanvas.width;
+      const h = landmarkCanvas.height;
+
+      if (!multiHandLandmarks || multiHandLandmarks.length < 2) return;
+
+      const p0 = multiHandLandmarks[0][0];
+      const p1 = multiHandLandmarks[1][0];
+      const x0 = p0.x * w, y0 = p0.y * h;
+      const x1 = p1.x * w, y1 = p1.y * h;
+
+      // line between palm centers
+      const alpha = 0.4 + gesture.openPercent * 0.6;
+      lCtx.save();
+      lCtx.globalAlpha = alpha;
+      lCtx.strokeStyle = '#ffee00';
+      lCtx.lineWidth   = 2;
+      lCtx.setLineDash([8, 6]);
+      lCtx.beginPath();
+      lCtx.moveTo(x0, y0);
+      lCtx.lineTo(x1, y1);
+      lCtx.stroke();
+      lCtx.setLineDash([]);
+
+      // center dot
+      lCtx.globalAlpha = 1;
+      lCtx.beginPath();
+      lCtx.arc(gesture.centerX, gesture.centerY, 6, 0, Math.PI * 2);
+      lCtx.fillStyle = '#ffee00';
+      lCtx.fill();
+      lCtx.restore();
+    }
+
     // ── Landmark drawing ────────────────────────────────────────
     function drawLandmarks(multiHandLandmarks, multiHandedness) {
       const w = landmarkCanvas.width;
@@ -160,44 +241,39 @@
         // dots
         lCtx.globalAlpha = 1;
         landmarks.forEach((pt, idx) => {
-          const isKey = [4, 8, 12, 16, 20, 0].includes(idx); // fingertips + wrist
+          const isKey = [4, 8, 12, 16, 20, 0].includes(idx);
           lCtx.beginPath();
           lCtx.arc(pt.x * w, pt.y * h, isKey ? 6 : 3, 0, Math.PI * 2);
           lCtx.fillStyle = isKey ? '#fff' : color;
           lCtx.fill();
         });
       });
+
+      drawGestureOverlay(multiHandLandmarks);
     }
 
     // ── Debug text ──────────────────────────────────────────────
     function updateDebug(multiHandLandmarks, multiHandedness) {
-      const detected = multiHandLandmarks && multiHandLandmarks.length > 0;
+      const count    = multiHandLandmarks?.length ?? 0;
+      const detected = count > 0;
       debugEl.style.color = detected ? '#00ff88' : '#ff4444';
 
-      if (!detected) {
-        debugEl.textContent = '손 감지: ❌ 없음';
-        return;
-      }
+      const labels = detected
+        ? multiHandedness.map(h => h.label === 'Left' ? '왼손' : '오른손').join(', ')
+        : '-';
 
-      const count = multiHandLandmarks.length;
-      const labels = multiHandedness.map(h => h.label === 'Left' ? '왼손' : '오른손').join(', ');
-
-      // thumb tip distance (landmark 4) between two hands
-      let distText = '-';
-      if (count === 2) {
-        const w = landmarkCanvas.width;
-        const h = landmarkCanvas.height;
-        const t0 = multiHandLandmarks[0][4];
-        const t1 = multiHandLandmarks[1][4];
-        const dx = (t0.x - t1.x) * w;
-        const dy = (t0.y - t1.y) * h;
-        distText = Math.round(Math.sqrt(dx * dx + dy * dy)) + 'px';
-      }
+      const pct   = gesture.openPercent.toFixed(2);
+      const tilt  = gesture.openPercent > 0 ? gesture.tiltAngle.toFixed(1) + '°' : '-';
+      const state = gesture.openPercent >= 1   ? '🟡 완전 열림'
+                  : gesture.openPercent > 0.01 ? `🟠 열리는 중`
+                  :                              '⚪ 닫힘';
 
       debugEl.textContent = [
-        `손 감지: ✅ ${count}개`,
+        `손 감지: ${detected ? '✅' : '❌'} ${count}개`,
         `종류: ${labels}`,
-        `엄지 간격: ${distText}`,
+        `openPercent: ${pct}`,
+        `tiltAngle: ${tilt}`,
+        `상태: ${state}`,
       ].join('\n');
     }
 
@@ -215,6 +291,7 @@
       });
 
       hands.onResults(results => {
+        calcGesture(results.multiHandLandmarks);
         drawLandmarks(results.multiHandLandmarks, results.multiHandedness);
         updateDebug(results.multiHandLandmarks, results.multiHandedness);
       });
